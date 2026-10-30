@@ -25,7 +25,7 @@
     <item row="1" column="1">
      <widget class="QPushButton" name="save_btn">
       <property name="text">
-       <string>Сохранить в CSV</string>
+       <string>Сохранить в PDF</string>
       </property>
      </widget>
     </item>
