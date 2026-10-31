@@ -76,4 +76,4 @@ def write_pdf(table_view, file_path, title, filters, exported_at=None):
     document = QTextDocument()
     document.setDefaultFont(QFont("Arial", 9))
     document.setHtml(html)
-    document.print_(printer)
+    document.print(printer)
