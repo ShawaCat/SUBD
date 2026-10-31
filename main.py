@@ -6,7 +6,6 @@ import os
 import sqlite3
 
 import sys
-import csv
 from PyQt6 import uic
 from PyQt6.QtWidgets import *
 from PyQt6.QtSql import *
@@ -14,7 +13,8 @@ from PyQt6.QtCore import QSortFilterProxyModel, Qt, QRegularExpression, QItemSel
 from tkinter import messagebox
 from PyQt6.QtGui import QRegularExpressionValidator, QStandardItemModel
 import pyqt6_multiselect_combobox
-import re
+
+from pdf_export import write_pdf
 
 sys.modules["pyqt6_multiselect-combobox"] = pyqt6_multiselect_combobox
 
@@ -679,7 +679,7 @@ def edit_record():
 def open_filter_window():
     global filterWindow, filter_query, key_selected_record, ntp_combo_selected, okrug_combo_selected
     global region_combo_selected, city_combo_selected, vuz_combo_selected
-    global filter_combo_state, filter_first_changed_combo
+    global filter_combo_state, filter_first_changed_combo, applied_geo_filters
 
     connection_name = QSqlDatabase.database().connectionName()
     QSqlDatabase.database().close()
@@ -745,10 +745,7 @@ def open_filter_window():
 
     # Восстанавливаем реальный выбор пользователя после повторного открытия окна.
     saved_selection = {
-        "okrug": okrug_combo_selected,
-        "region": region_combo_selected,
-        "city": city_combo_selected,
-        "vuz": vuz_combo_selected,
+        name: applied_geo_filters.get(name, []) for name in FIELDS
     }
     selected = {
         name: set(values or [])
@@ -762,6 +759,7 @@ def open_filter_window():
     def set_fn():
         global filter_query
         global ntp_combo_selected, okrug_combo_selected, region_combo_selected, city_combo_selected, vuz_combo_selected
+        global applied_geo_filters
         nonlocal VUZ_CODVUZ
         selected_items = []
         selected_ntp = []
@@ -774,6 +772,9 @@ def open_filter_window():
         selected_items.append(filterWindow.city_combo.currentData())
         selected_items.append(filterWindow.vuz_combo.currentData())
         selected_ntp.extend(filterWindow.ntp_combo.currentData())
+        # Только выбор пользователя: связанные значения могут быть отмечены визуально.
+        applied_geo_filters = {name: sorted(selected[name]) for name in FIELDS}
+        filter_query = ""
         ntp_combo_selected = filterWindow.ntp_combo.currentData()
         okrug_combo_selected = filterWindow.okrug_combo.currentData()
         region_combo_selected = filterWindow.region_combo.currentData()
@@ -822,6 +823,7 @@ def open_filter_window():
     def clear_fn():
         global filter_query
         global ntp_combo_selected, okrug_combo_selected, region_combo_selected, city_combo_selected, vuz_combo_selected
+        global applied_geo_filters
 
         print("Все выделения сброшены.")
 
@@ -856,6 +858,7 @@ def open_filter_window():
             ntp_combo.blockSignals(False)
 
         filter_query = ""
+        applied_geo_filters = {}
 
         ntp_combo_selected = []
         okrug_combo_selected = []
@@ -1088,95 +1091,36 @@ def analysis(mode):
     cur.execute("SELECT [код_НТП], [Название_НТП] FROM ntp_prog")
     number_name_NTP = cur.fetchall()
 
-    def export_table_to_csv(tableView):
-        global filter_query
-        print(filter_query)
+    def export_table_to_pdf(table_view):
+        titles = {
+            1: "Распределение НИР по ВУЗ",
+            2: "Распределение НИР по НТП",
+            3: "Распределение НИР по типам",
+        }
+        if table_view.model() is None:
+            messagebox.showwarning("Предупреждение", "У таблицы отсутствует модель данных.")
+            return
 
         file_path, _ = QFileDialog.getSaveFileName(
-            None,
-            "Сохранить таблицу в CSV",
-            "export.csv",
-            "CSV-файлы (*.csv);;Все файлы (*)"
+            analysisWindow,
+            "Сохранить таблицу в PDF",
+            "export.pdf",
+            "PDF-файлы (*.pdf)"
         )
-
-        # Пользователь нажал «Отмена»
         if not file_path:
             return
+        if not file_path.lower().endswith(".pdf"):
+            file_path += ".pdf"
 
-        # Добавляем расширение .csv, если его нет
-        if not file_path.lower().endswith(".csv"):
-            file_path += ".csv"
-
-        # Получаем модель данных таблицы
-        model = tableView.model()
-
-        if model is None:
-            messagebox.showwarning("Предупреждение","У таблицы отсутствует модель данных.")
-            return
-
+        # Используем только применённые фильтры (а не SQL или неподтверждённые
+        # изменения в окне). НТП сохраняется независимо от геофильтров.
+        filters = {name: list(values) for name, values in applied_geo_filters.items()}
+        filters["ntp"] = list(ntp_combo_selected)
         try:
-            with open(
-                    file_path,
-                    "w",
-                    newline="",
-                    encoding="utf-8-sig"
-            ) as csv_file:
-
-                writer = csv.writer(
-                    csv_file,
-                    delimiter=";"
-                )
-
-                headers = []
-
-                for column in range(model.columnCount()):
-                    header = model.headerData(
-                        column,
-                        Qt.Orientation.Horizontal,
-                        Qt.ItemDataRole.DisplayRole
-                    )
-                    headers.append(
-                        "" if header is None else str(header)
-                    )
-
-                writer.writerow(headers)
-
-                for row in range(model.rowCount()):
-                    row_data = []
-
-                    for column in range(model.columnCount()):
-                        index = model.index(row, column)
-                        value = model.data(
-                            index,
-                            Qt.ItemDataRole.DisplayRole
-                        )
-
-                        row_data.append(
-                            "" if value is None else str(value)
-                        )
-
-                    writer.writerow(row_data)
-
-                writer.writerow([""])
-                if len(filter_query) <= 2:
-                    writer.writerow(["", "Условия фильтра:", "Все данные"])
-                else:
-                    raw_groups = re.findall(r"\(([^)]+)\)", filter_query)
-                    parsed_lists = []
-                    for group in raw_groups:
-                        clean_elements = [elem.strip().strip("'\"") for elem in group.split(",")]
-                        parsed_lists.append(clean_elements)
-                    writer.writerow(["Условия фильтра:"])
-                    for i in range(len(parsed_lists)):
-                        parsed_lists[i].insert(0, "")
-                        writer.writerow(parsed_lists[i])
-
-
-
-            messagebox.showinfo("Успешно",f"Данные экспортированы в файл:\n{file_path}")
-
+            write_pdf(table_view, file_path, titles[mode], filters)
+            messagebox.showinfo("Успешно", f"Данные экспортированы в файл:\n{file_path}")
         except Exception as error:
-            messagebox.showerror("Ошибка экспорта",f"Не удалось сохранить файл:\n{error}")
+            messagebox.showerror("Ошибка экспорта", f"Не удалось сохранить файл:\n{error}")
 
     def analysisWindow_close():
         cur.close()
@@ -1315,7 +1259,7 @@ def analysis(mode):
     analysisWindow.close_btn.clicked.connect(analysisWindow_close)
     # analysisWindow.tableView.setSortingEnabled(True)
     analysisWindow.tableView.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-    analysisWindow.save_btn.clicked.connect(lambda: export_table_to_csv(analysisWindow.tableView))
+    analysisWindow.save_btn.clicked.connect(lambda: export_table_to_pdf(analysisWindow.tableView))
     analysisWindow.show()
 
 
@@ -1334,6 +1278,8 @@ model = None
 proxy_model = None
 table_num = 1
 filter_query = ""
+# Применённые пользователем географические фильтры, без автоотметок в ComboBox.
+applied_geo_filters = {}
 key_selected_record = []
 ntp_combo_selected = []
 okrug_combo_selected = []
