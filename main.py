@@ -175,6 +175,35 @@ def rebuild_db():
         Q5 = "UPDATE ntp_prog SET [П_фин_1] = ?, [П_фин_2] = ?, [П_фин_3] = ?, [П_фин_4] = ? WHERE [код_НТП] = ?"
         cur.execute(Q5, pl_f_ntp_1234)
 
+    # сумма фактического финансирования НТП по всем входящим НИР
+    # Для НТП без проектов сбрасываем прежнюю сумму в ноль.
+    cur.execute("""
+        UPDATE ntp_prog SET [Факт_фин] = COALESCE((
+            SELECT SUM(p.[Факт_фин]) FROM ntp_proj AS p
+            WHERE p.[НТП] = ntp_prog.[код_НТП]
+        ), 0)
+    """)
+
+    # распределяем фактическое финансирование каждого НИР по кварталам
+    cur.execute("SELECT COALESCE([Факт_фин], 0), [НТП], [НИР] FROM ntp_proj")
+    for fact_fin, ntp_code, nir_code in cur.fetchall():
+        quarter = fact_fin // 4
+        cur.execute("""
+            UPDATE ntp_proj SET [Ф_фин_1] = ?, [Ф_фин_2] = ?,
+                                [Ф_фин_3] = ?, [Ф_фин_4] = ?
+            WHERE [НТП] = ? AND [НИР] = ?
+        """, (quarter, quarter, quarter, fact_fin - 3 * quarter, ntp_code, nir_code))
+
+    # распределяем общую сумму каждого НТП по кварталам тем же способом
+    cur.execute("SELECT [Факт_фин], [код_НТП] FROM ntp_prog")
+    for fact_fin, ntp_code in cur.fetchall():
+        quarter = fact_fin // 4
+        cur.execute("""
+            UPDATE ntp_prog SET [Ф_фин_1] = ?, [Ф_фин_2] = ?,
+                                [Ф_фин_3] = ?, [Ф_фин_4] = ?
+            WHERE [код_НТП] = ?
+        """, (quarter, quarter, quarter, fact_fin - 3 * quarter, ntp_code))
+
     con.commit()
     cur.close()
     con.close()
