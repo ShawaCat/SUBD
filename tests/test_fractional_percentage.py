@@ -1,4 +1,4 @@
-"""Регрессия: дробный процент не должен падать при распределении."""
+"""Регрессии распределения и записи без запуска Qt."""
 
 import ast
 import math
@@ -8,10 +8,13 @@ from types import SimpleNamespace
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-FUNCTIONS = [
-    node for node in ast.parse((ROOT / "testing/finans.py").read_text(encoding="utf-8")).body
-    if isinstance(node, ast.FunctionDef) and node.name in {"allocate_amounts", "raspred_fn"}
-]
+TREE = ast.parse((ROOT / "finans.py").read_text(encoding="utf-8"))
+FUNCTIONS = [node for node in TREE.body
+             if isinstance(node, ast.FunctionDef) and node.name == "allocate_amounts"]
+FINANCING_CLASS = next(node for node in TREE.body
+                       if isinstance(node, ast.ClassDef) and node.name == "FinancingWindow")
+FUNCTIONS += [node for node in FINANCING_CLASS.body
+              if isinstance(node, ast.FunctionDef) and node.name in {"raspred_fn", "write_to_db_fn"}]
 
 
 class FakeItem:
@@ -51,6 +54,7 @@ class FractionalPercentageTest(unittest.TestCase):
     def setUp(self):
         self.con = sqlite3.connect(":memory:")
         self.addCleanup(self.con.close)
+        # Две строки с одинаковым [НТП, НИР] проверяют запись по rowid.
         self.con.executescript("""
             CREATE TABLE ntp_proj (
                 [НТП] INTEGER, [НИР] INTEGER, [ВУЗ] INTEGER, [План_фин] INTEGER,
@@ -58,28 +62,32 @@ class FractionalPercentageTest(unittest.TestCase):
                 [Ф_фин_3] INTEGER, [Ф_фин_4] INTEGER, [Факт_фин] INTEGER
             );
             INSERT INTO ntp_proj VALUES (401, 1, 1, 200, 0, 0, 0, 0, 0),
-                                        (401, 2, 1, 100, 0, 0, 0, 0, 0);
+                                        (401, 1, 1, 100, 0, 0, 0, 0, 0);
             CREATE TABLE VUZ (codvuz INTEGER, z1 TEXT);
             INSERT INTO VUZ VALUES (1, 'Университет');
+            UPDATE ntp_proj SET rowid = 43 WHERE rowid = 2;
         """)
         self.errors = []
+        self.saved = []
         self.window = SimpleNamespace(
             summ_raspred=SimpleNamespace(text=lambda: "32"),
             quartal_fin=SimpleNamespace(text=lambda: "2"),
             proc_raspred=SimpleNamespace(text=lambda: "10.5"),
             tableView=FakeTableView(),
+            con=self.con, cur=self.con.cursor(), report_quarter=None,
+            base_dir=ROOT, fill_data=lambda: None,
+            save_report=lambda path, date: self.saved.append(path),
         )
         self.context = {
-            "finWindow": self.window, "con": self.con, "cur": self.con.cursor(),
-            "math": math, "report_quarter": None,
-            "messagebox": SimpleNamespace(showerror=lambda *args: self.errors.append(args)),
+            "math": math,
+            "QMessageBox": SimpleNamespace(critical=lambda *args: self.errors.append(args)),
             "QStandardItemModel": FakeModel, "QStandardItem": FakeItem,
         }
         exec(compile(ast.Module(body=FUNCTIONS, type_ignores=[]), "finans.py", "exec"),
              self.context)
 
     def test_fractional_percentage_is_applied_not_truncated(self):
-        self.context["raspred_fn"]()
+        self.context["raspred_fn"](self.window)
         self.assertEqual(self.errors, [])
         self.assertEqual(self.con.execute("""
             SELECT [Доб_фин], [Ф_фин_2], [Факт_фин]
@@ -89,10 +97,25 @@ class FractionalPercentageTest(unittest.TestCase):
             "SELECT [Факт_фин] FROM main.ntp_proj ORDER BY rowid"
         ).fetchall(), [(0,), (0,)])
         self.assertEqual(self.window.tableView.model.cells[1, 1], "32")
-        self.assertEqual(self.context["report_quarter"], 2)
+        self.assertEqual(self.window.report_quarter, 2)
+
+    def test_write_matches_duplicate_keys_by_rowid(self):
+        from datetime import datetime
+        class Clock:
+            @staticmethod
+            def now():
+                return datetime(2026, 11, 1)
+        self.context["datetime"] = Clock
+        self.context["report_filename"] = lambda date: "report.pdf"
+        self.context["raspred_fn"](self.window)
+        self.context["write_to_db_fn"](self.window)
+        self.assertEqual(self.con.execute(
+            "SELECT [Факт_фин], [Ф_фин_2] FROM ntp_proj ORDER BY rowid"
+        ).fetchall(), [(21, 21), (11, 11)])
+        self.assertEqual(self.saved, [ROOT / "report.pdf"])
 
     def test_full_sum_for_real_database_at_ten_point_five_percent(self):
-        with sqlite3.connect(ROOT / "testing/res/data.db") as database:
+        with sqlite3.connect(ROOT / "res/data.db") as database:
             plans = [row[0] for row in database.execute(
                 "SELECT [План_фин] FROM ntp_proj ORDER BY rowid"
             )]
@@ -102,9 +125,9 @@ class FractionalPercentageTest(unittest.TestCase):
 
     def test_invalid_percentage_is_reported_instead_of_crashing(self):
         self.window.proc_raspred = SimpleNamespace(text=lambda: "10..5")
-        self.context["raspred_fn"]()
+        self.context["raspred_fn"](self.window)
         self.assertEqual(len(self.errors), 1)
-        self.assertIn("процент", self.errors[0][1])
+        self.assertIn("процент", self.errors[0][2])
         self.assertEqual([row[1] for row in self.con.execute("PRAGMA database_list")], ["main"])
 
 

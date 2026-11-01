@@ -15,6 +15,7 @@ from PyQt6.QtGui import QRegularExpressionValidator, QStandardItemModel
 import pyqt6_multiselect_combobox
 
 from pdf_export import write_pdf
+from finans import FinancingWindow
 
 sys.modules["pyqt6_multiselect-combobox"] = pyqt6_multiselect_combobox
 
@@ -1079,6 +1080,45 @@ def analysis_nir_by_ntp_btn():
 def analysis_nir_by_type_btn():
     analysis(3)
 
+def open_financing():
+    """Передать владение базой окну финансирования до его закрытия."""
+    global finansWindow, model, proxy_model
+    if finansWindow is not None:
+        finansWindow.raise_()
+        finansWindow.activateWindow()
+        return
+
+    # Модель и запросы больше не должны удерживать закрываемое Qt-подключение.
+    form.tableView.setModel(None)
+    model = None
+    proxy_model = None
+    connection = QSqlDatabase.database()
+    connection_name = connection.connectionName()
+    connection.close()
+    del connection
+    QSqlDatabase.removeDatabase(connection_name)
+    window.setEnabled(False)
+    try:
+        finansWindow = FinancingWindow(db_file, on_close=close_financing)
+        finansWindow.show()
+    except Exception as error:
+        close_financing()
+        QMessageBox.critical(window, "Ошибка", f"Не удалось открыть финансирование:\n{error}")
+
+
+def close_financing():
+    """После sqlite3 восстановить QSql, таблицу и агрегаты НТП."""
+    global finansWindow
+    finansWindow = None
+    try:
+        connect_db(db_file)
+        rebuild_db()  # Пересчитывает НТП и заново открывает активную таблицу.
+        if table_num == 1:
+            sort_table()
+    finally:
+        window.setEnabled(True)
+
+
 def analysis(mode):
     global analysisWindow, filter_query
 
@@ -1290,6 +1330,7 @@ filterWindow = None
 editForm = None
 editWindow = None
 analysisWindow = None
+finansWindow = None
 model = None
 proxy_model = None
 table_num = 1
@@ -1352,6 +1393,7 @@ form.help_btn.triggered.connect(view_help)
 form.NIR_by_VUZ.triggered.connect(analysis_nir_by_vuz_btn)
 form.NIR_by_NTP.triggered.connect(analysis_nir_by_ntp_btn)
 form.NIR_by_type.triggered.connect(analysis_nir_by_type_btn)
+form.finans_btn.triggered.connect(open_financing)
 form.Sort_btn.clicked.connect(sort_table)
 form.tableView.clicked.connect(off_btns)
 form.tableView.verticalHeader().sectionClicked.connect(take_record_num)

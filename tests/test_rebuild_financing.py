@@ -53,6 +53,10 @@ class RebuildFinancingTest(unittest.TestCase):
 
     def test_rebuild_does_not_modify_nir_actuals_but_sums_by_program(self):
         with closing(sqlite3.connect(self.db_path)) as con:
+            # Не зависеть от уже сохранённого финансирования других НИР в БД.
+            con.execute("""UPDATE ntp_proj SET [Факт_фин] = 0,
+                [Ф_фин_1] = 0, [Ф_фин_2] = 0, [Ф_фин_3] = 0, [Ф_фин_4] = 0
+                WHERE [НТП] = 401""")
             con.execute("""UPDATE ntp_proj SET [Факт_фин] = 25,
                 [Ф_фин_1] = 1, [Ф_фин_2] = 2, [Ф_фин_3] = 3, [Ф_фин_4] = 4
                 WHERE [НТП] = 401 AND [НИР] = 1""")

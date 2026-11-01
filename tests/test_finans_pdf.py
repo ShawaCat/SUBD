@@ -1,16 +1,15 @@
-"""Заголовок PDF и поведение кнопок без запуска PyQt6."""
+"""Заголовок PDF и поведение экспорта без запуска PyQt6."""
 
 import ast
 from datetime import datetime
 from pathlib import Path
-import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
 
+from finans_pdf import build_report_html, report_filename
+
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "testing"))
-from pdf_report import build_report_html, report_filename
 
 
 class PdfReportTest(unittest.TestCase):
@@ -35,11 +34,14 @@ class PdfReportTest(unittest.TestCase):
                 build_report_html([], [], invalid, exported_at)
 
     def test_dialog_and_auto_save_share_one_report_without_database_writes(self):
-        code = ast.parse((ROOT / "testing/finans.py").read_text(encoding="utf-8"))
-        functions = [node for node in code.body
+        code = ast.parse((ROOT / "finans.py").read_text(encoding="utf-8"))
+        window_class = next(node for node in code.body if isinstance(node, ast.ClassDef)
+                            and node.name == "FinancingWindow")
+        functions = [node for node in window_class.body
                      if isinstance(node, ast.FunctionDef) and node.name in
-                     {"save_report", "export_pdf", "save_pdf_in_program_dir"}]
+                     {"save_report", "export_pdf"}]
         exported_at = datetime(2026, 11, 1, 15, 7, 8)
+
         class FixedClock:
             @staticmethod
             def now():
@@ -51,35 +53,36 @@ class PdfReportTest(unittest.TestCase):
             errors = []
             file_dialog = SimpleNamespace(getSaveFileName=lambda *args: (str(path / "report"), ""))
             namespace = {
-                "BASE_DIR": path, "datetime": FixedClock, "report_filename": report_filename,
-                "finWindow": SimpleNamespace(tableView=object()), "report_quarter": 2,
+                "datetime": FixedClock, "report_filename": report_filename,
                 "QFileDialog": file_dialog,
                 "write_table_pdf": lambda *args: calls.append(args),
-                "messagebox": SimpleNamespace(
-                    showerror=lambda *args: errors.append(args),
-                    showinfo=lambda *args: None,
+                "QMessageBox": SimpleNamespace(
+                    critical=lambda *args: errors.append(args),
+                    information=lambda *args: None,
                 ),
             }
             exec(compile(ast.Module(body=functions, type_ignores=[]),
                          "finans.py", "exec"), namespace)
-            namespace["export_pdf"]()
+            window = SimpleNamespace(
+                base_dir=path, tableView=object(), report_quarter=2,
+            )
+            window.save_report = lambda filename, date: namespace["save_report"](
+                window, filename, date)
+            namespace["export_pdf"](window)
             self.assertEqual(calls[-1][1:], (2, str(path / "report.pdf"), exported_at))
-            namespace["save_pdf_in_program_dir"]()
-            self.assertEqual(calls[-1][1:],
-                             (2, path / report_filename(exported_at), exported_at))
             self.assertEqual(errors, [])
 
             # Отмена диалога не запускает печать и не создаёт файл.
             namespace["QFileDialog"] = SimpleNamespace(
                 getSaveFileName=lambda *args: ("", "")
             )
-            namespace["export_pdf"]()
-            self.assertEqual(len(calls), 2)
+            namespace["export_pdf"](window)
+            self.assertEqual(len(calls), 1)
 
             # Экспорт до распределения невозможен.
-            namespace["report_quarter"] = None
-            namespace["save_pdf_in_program_dir"]()
-            self.assertEqual(len(calls), 2)
+            window.report_quarter = None
+            namespace["export_pdf"](window)
+            self.assertEqual(len(calls), 1)
             self.assertEqual(len(errors), 1)
 
 
