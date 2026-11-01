@@ -15,7 +15,7 @@ from PyQt6.QtGui import QRegularExpressionValidator, QStandardItemModel
 import pyqt6_multiselect_combobox
 
 from pdf_export import write_pdf
-from finans import FinancingWindow
+from finans import open_financing_window
 
 sys.modules["pyqt6_multiselect-combobox"] = pyqt6_multiselect_combobox
 
@@ -1099,7 +1099,7 @@ def open_financing():
     QSqlDatabase.removeDatabase(connection_name)
     window.setEnabled(False)
     try:
-        finansWindow = FinancingWindow(db_file, on_close=close_financing)
+        finansWindow = open_financing_window(db_file, on_close_callback=close_financing)
         finansWindow.show()
     except Exception as error:
         close_financing()

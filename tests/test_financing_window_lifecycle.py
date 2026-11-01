@@ -36,18 +36,15 @@ class FinancingWindowLifecycleTest(unittest.TestCase):
             def removeDatabase(name):
                 events.append(("qsql_removed", name))
 
-        class Finance:
-            def __init__(self, db_file, on_close):
-                events.append(("finance_open", db_file))
-                self.on_close = on_close
-
-            def show(self):
-                events.append("finance_shown")
+        def open_financing_window(db_file, on_close_callback):
+            events.append(("finance_open", db_file))
+            return SimpleNamespace(on_close=on_close_callback,
+                                   show=lambda: events.append("finance_shown"))
 
         namespace = {
             "form": form, "window": window, "model": object(),
             "proxy_model": object(), "finansWindow": None,
-            "QSqlDatabase": QSql, "FinancingWindow": Finance,
+            "QSqlDatabase": QSql, "open_financing_window": open_financing_window,
             "db_file": "res/data.db", "table_num": 1,
             "connect_db": lambda db: events.append(("qsql_connected", db)),
             "rebuild_db": lambda: events.append("rebuild"),
@@ -68,29 +65,28 @@ class FinancingWindowLifecycleTest(unittest.TestCase):
             ("qsql_connected", "res/data.db"), "rebuild", "sort",
             ("main_enabled", True)])
 
-    def test_close_event_closes_sqlite_before_callback(self):
-        window_class = next(node for node in FINANS.body
-                            if isinstance(node, ast.ClassDef) and node.name == "FinancingWindow")
-        close_event = next(node for node in window_class.body
-                           if isinstance(node, ast.FunctionDef) and node.name == "closeEvent")
+    def test_closing_window_closes_sqlite_before_callback(self):
+        functions = [node for node in FINANS.body if isinstance(node, ast.FunctionDef)
+                     and node.name in {"cancel_btn", "finish_financing"}]
         events = []
-        class Base:
-            def closeEvent(self, event):
-                events.append("base_close")
-        isolated = ast.ClassDef(name="FinancingWindow", bases=[ast.Name(id="Base", ctx=ast.Load())],
-                                keywords=[], body=[close_event], decorator_list=[])
-        namespace = {"Base": Base}
-        exec(compile(ast.fix_missing_locations(ast.Module(body=[isolated], type_ignores=[])),
+        namespace = {
+            "cur": SimpleNamespace(close=lambda: events.append("cursor_close")),
+            "con": SimpleNamespace(close=lambda: events.append("sqlite_close")),
+            "report_quarter": 2,
+            "on_close": lambda: events.append("restore_qsql"),
+        }
+        exec(compile(ast.Module(body=functions, type_ignores=[]),
                      "finans.py", "exec"), namespace)
-        window = namespace["FinancingWindow"]()
-        window._closed = False
-        window.cur = SimpleNamespace(close=lambda: events.append("cursor_close"))
-        window.con = SimpleNamespace(close=lambda: events.append("sqlite_close"))
-        window._on_close = lambda: events.append("restore_qsql")
-        window.closeEvent(object())
-        window.closeEvent(object())
-        self.assertEqual(events, ["cursor_close", "sqlite_close", "restore_qsql",
-                                  "base_close", "base_close"])
+        def close_window():
+            events.append("window_close")
+            namespace["finish_financing"]()  # Qt destroyed после close.
+        namespace["finWindow"] = SimpleNamespace(close=close_window)
+        namespace["cancel_btn"]()
+        namespace["finish_financing"]()  # Повторный сигнал не восстанавливает БД дважды.
+        self.assertEqual(events, ["window_close", "cursor_close", "sqlite_close",
+                                  "restore_qsql"])
+        self.assertIsNone(namespace["finWindow"])
+        self.assertIsNone(namespace["report_quarter"])
 
 
 if __name__ == "__main__":

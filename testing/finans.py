@@ -8,12 +8,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from PyQt6.QtWidgets import QApplication
-from finans import FinancingWindow
+from finans import open_financing_window
 
 
 def main():
     app = QApplication(sys.argv)
-    window = FinancingWindow(Path(__file__).parent / "res/data.db")
+    window = open_financing_window(Path(__file__).parent / "res/data.db")
     window.show()
     return app.exec()
 

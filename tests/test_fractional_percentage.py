@@ -2,7 +2,9 @@
 
 import ast
 import math
+from datetime import datetime
 from pathlib import Path
+import re
 import sqlite3
 from types import SimpleNamespace
 import unittest
@@ -10,11 +12,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 TREE = ast.parse((ROOT / "finans.py").read_text(encoding="utf-8"))
 FUNCTIONS = [node for node in TREE.body
-             if isinstance(node, ast.FunctionDef) and node.name == "allocate_amounts"]
-FINANCING_CLASS = next(node for node in TREE.body
-                       if isinstance(node, ast.ClassDef) and node.name == "FinancingWindow")
-FUNCTIONS += [node for node in FINANCING_CLASS.body
-              if isinstance(node, ast.FunctionDef) and node.name in {"raspred_fn", "write_to_db_fn"}]
+             if isinstance(node, ast.FunctionDef) and node.name in
+             {"allocate_amounts", "raspred_fn", "write_to_db", "fill_data", "proc_raspred_changed"}]
 
 
 class FakeItem:
@@ -50,11 +49,25 @@ class FakeTableView:
         return self.header
 
 
+class FakeLineEdit:
+    def __init__(self, value=""):
+        self.value = value
+
+    def text(self):
+        return self.value
+
+    def setText(self, value):
+        self.value = value
+
+    def blockSignals(self, blocked):
+        pass
+
+
 class FractionalPercentageTest(unittest.TestCase):
     def setUp(self):
         self.con = sqlite3.connect(":memory:")
         self.addCleanup(self.con.close)
-        # Две строки с одинаковым [НТП, НИР] проверяют запись по rowid.
+        # Повторяющиеся [НТП, НИР] и пропущенные rowid проверяют сохранение.
         self.con.executescript("""
             CREATE TABLE ntp_proj (
                 [НТП] INTEGER, [НИР] INTEGER, [ВУЗ] INTEGER, [План_фин] INTEGER,
@@ -70,16 +83,21 @@ class FractionalPercentageTest(unittest.TestCase):
         self.errors = []
         self.saved = []
         self.window = SimpleNamespace(
-            summ_raspred=SimpleNamespace(text=lambda: "32"),
-            quartal_fin=SimpleNamespace(text=lambda: "2"),
-            proc_raspred=SimpleNamespace(text=lambda: "10.5"),
+            summ_raspred=FakeLineEdit("32"),
+            quartal_fin=FakeLineEdit("2"),
+            proc_raspred=FakeLineEdit("10.5"),
             tableView=FakeTableView(),
-            con=self.con, cur=self.con.cursor(), report_quarter=None,
-            base_dir=ROOT, fill_data=lambda: None,
-            save_report=lambda path, date: self.saved.append(path),
+            n_prog=FakeLineEdit(), n_vuz=FakeLineEdit(),
+            now_plan_fin=FakeLineEdit(), now_fact_fin=FakeLineEdit(),
+            proc_fact_fin=FakeLineEdit(),
         )
         self.context = {
-            "math": math,
+            "con": self.con, "cur": self.con.cursor(), "finWindow": self.window,
+            "report_quarter": None, "BASE_DIR": ROOT, "re": re, "math": math,
+            "PERCENT_PATTERN": r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)",
+            "datetime": SimpleNamespace(now=lambda: datetime(2026, 11, 1)),
+            "report_filename": lambda date: "report.pdf",
+            "save_report": lambda path, date: self.saved.append(path),
             "QMessageBox": SimpleNamespace(critical=lambda *args: self.errors.append(args)),
             "QStandardItemModel": FakeModel, "QStandardItem": FakeItem,
         }
@@ -87,7 +105,7 @@ class FractionalPercentageTest(unittest.TestCase):
              self.context)
 
     def test_fractional_percentage_is_applied_not_truncated(self):
-        self.context["raspred_fn"](self.window)
+        self.context["raspred_fn"]()
         self.assertEqual(self.errors, [])
         self.assertEqual(self.con.execute("""
             SELECT [Доб_фин], [Ф_фин_2], [Факт_фин]
@@ -97,22 +115,32 @@ class FractionalPercentageTest(unittest.TestCase):
             "SELECT [Факт_фин] FROM main.ntp_proj ORDER BY rowid"
         ).fetchall(), [(0,), (0,)])
         self.assertEqual(self.window.tableView.model.cells[1, 1], "32")
-        self.assertEqual(self.window.report_quarter, 2)
+        self.assertEqual(self.context["report_quarter"], 2)
+
+    def test_half_percent_from_line_edit(self):
+        self.window.proc_raspred.setText(".5")
+        self.window.now_plan_fin.setText("300")
+        self.context["proc_raspred_changed"]()
+        self.assertEqual(self.window.summ_raspred.text(), "2")
+        self.context["raspred_fn"]()
+        self.assertEqual(self.errors, [])
+        self.assertEqual(self.window.tableView.model.cells[1, 1], "2")
 
     def test_write_matches_duplicate_keys_by_rowid(self):
-        from datetime import datetime
-        class Clock:
-            @staticmethod
-            def now():
-                return datetime(2026, 11, 1)
-        self.context["datetime"] = Clock
-        self.context["report_filename"] = lambda date: "report.pdf"
-        self.context["raspred_fn"](self.window)
-        self.context["write_to_db_fn"](self.window)
+        self.context["raspred_fn"]()
+        self.context["write_to_db"]()
         self.assertEqual(self.con.execute(
             "SELECT [Факт_фин], [Ф_фин_2] FROM ntp_proj ORDER BY rowid"
         ).fetchall(), [(21, 21), (11, 11)])
         self.assertEqual(self.saved, [ROOT / "report.pdf"])
+
+    def test_actual_percentage_rounded_to_three_digits(self):
+        self.con.execute("UPDATE ntp_proj SET [Факт_фин] = 1 WHERE rowid = 1")
+        self.context["fill_data"]()
+        self.assertEqual(self.window.proc_fact_fin.text(), "0.333")
+        self.con.execute("UPDATE ntp_proj SET [План_фин] = 0")
+        self.context["fill_data"]()
+        self.assertEqual(self.window.proc_fact_fin.text(), "0")
 
     def test_full_sum_for_real_database_at_ten_point_five_percent(self):
         with sqlite3.connect(ROOT / "res/data.db") as database:
@@ -124,8 +152,8 @@ class FractionalPercentageTest(unittest.TestCase):
                          38715516)
 
     def test_invalid_percentage_is_reported_instead_of_crashing(self):
-        self.window.proc_raspred = SimpleNamespace(text=lambda: "10..5")
-        self.context["raspred_fn"](self.window)
+        self.window.proc_raspred.setText("10..5")
+        self.context["raspred_fn"]()
         self.assertEqual(len(self.errors), 1)
         self.assertIn("процент", self.errors[0][2])
         self.assertEqual([row[1] for row in self.con.execute("PRAGMA database_list")], ["main"])

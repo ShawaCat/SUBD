@@ -35,9 +35,7 @@ class PdfReportTest(unittest.TestCase):
 
     def test_dialog_and_auto_save_share_one_report_without_database_writes(self):
         code = ast.parse((ROOT / "finans.py").read_text(encoding="utf-8"))
-        window_class = next(node for node in code.body if isinstance(node, ast.ClassDef)
-                            and node.name == "FinancingWindow")
-        functions = [node for node in window_class.body
+        functions = [node for node in code.body
                      if isinstance(node, ast.FunctionDef) and node.name in
                      {"save_report", "export_pdf"}]
         exported_at = datetime(2026, 11, 1, 15, 7, 8)
@@ -54,7 +52,8 @@ class PdfReportTest(unittest.TestCase):
             file_dialog = SimpleNamespace(getSaveFileName=lambda *args: (str(path / "report"), ""))
             namespace = {
                 "datetime": FixedClock, "report_filename": report_filename,
-                "QFileDialog": file_dialog,
+                "QFileDialog": file_dialog, "BASE_DIR": path,
+                "finWindow": SimpleNamespace(tableView=object()), "report_quarter": 2,
                 "write_table_pdf": lambda *args: calls.append(args),
                 "QMessageBox": SimpleNamespace(
                     critical=lambda *args: errors.append(args),
@@ -63,12 +62,7 @@ class PdfReportTest(unittest.TestCase):
             }
             exec(compile(ast.Module(body=functions, type_ignores=[]),
                          "finans.py", "exec"), namespace)
-            window = SimpleNamespace(
-                base_dir=path, tableView=object(), report_quarter=2,
-            )
-            window.save_report = lambda filename, date: namespace["save_report"](
-                window, filename, date)
-            namespace["export_pdf"](window)
+            namespace["export_pdf"]()
             self.assertEqual(calls[-1][1:], (2, str(path / "report.pdf"), exported_at))
             self.assertEqual(errors, [])
 
@@ -76,12 +70,12 @@ class PdfReportTest(unittest.TestCase):
             namespace["QFileDialog"] = SimpleNamespace(
                 getSaveFileName=lambda *args: ("", "")
             )
-            namespace["export_pdf"](window)
+            namespace["export_pdf"]()
             self.assertEqual(len(calls), 1)
 
             # Экспорт до распределения невозможен.
-            window.report_quarter = None
-            namespace["export_pdf"](window)
+            namespace["report_quarter"] = None
+            namespace["export_pdf"]()
             self.assertEqual(len(calls), 1)
             self.assertEqual(len(errors), 1)
 
