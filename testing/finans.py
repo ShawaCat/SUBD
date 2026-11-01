@@ -78,6 +78,7 @@ def proc_raspred_changed():
         finWindow.summ_raspred.blockSignals(False)
 
 def raspred_fn():
+
     if finWindow.summ_raspred.text() == "":
         messagebox.showerror("Ошибка", "Не задана сумма распределения")
         return -1
@@ -88,8 +89,29 @@ def raspred_fn():
         messagebox.showerror("Ошибка", "Задан некорректный квартал финансирования")
         return -1
 
+    procent = int(finWindow.proc_raspred.text())
+    num_quart = int(finWindow.quartal_fin.text())
+
     cur.execute("ATTACH DATABASE ':memory:' AS ram_db")
     cur.execute("CREATE TABLE ram_db.ntp_proj AS SELECT * FROM main.ntp_proj")
+
+    cur.execute("SELECT * FROM ram_db.ntp_proj")
+    spis = cur.fetchall()
+    for i in range(5):
+        print(spis[i])
+
+    query = f"""
+        UPDATE ram_db.ntp_proj 
+        SET [Ф_фин_{num_quart}] = [Ф_фин_{num_quart}] + FLOOR([План_фин] * {procent} / 100.0)
+    """
+    cur.execute(query)
+
+    spis = []
+    cur.execute("SELECT * FROM ram_db.ntp_proj")
+    spis = cur.fetchall()
+    for i in range(5):
+        print(spis[i])
+
 
 con = sqlite3.connect('res/data.db')
 cur = con.cursor()
