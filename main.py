@@ -175,34 +175,15 @@ def rebuild_db():
         Q5 = "UPDATE ntp_prog SET [П_фин_1] = ?, [П_фин_2] = ?, [П_фин_3] = ?, [П_фин_4] = ? WHERE [код_НТП] = ?"
         cur.execute(Q5, pl_f_ntp_1234)
 
-    # сумма фактического финансирования НТП по всем входящим НИР
-    # Для НТП без проектов сбрасываем прежнюю сумму в ноль.
-    cur.execute("""
-        UPDATE ntp_prog SET [Факт_фин] = COALESCE((
-            SELECT SUM(p.[Факт_фин]) FROM ntp_proj AS p
-            WHERE p.[НТП] = ntp_prog.[код_НТП]
-        ), 0)
-    """)
-
-    # распределяем фактическое финансирование каждого НИР по кварталам
-    cur.execute("SELECT COALESCE([Факт_фин], 0), [НТП], [НИР] FROM ntp_proj")
-    for fact_fin, ntp_code, nir_code in cur.fetchall():
-        quarter = fact_fin // 4
-        cur.execute("""
-            UPDATE ntp_proj SET [Ф_фин_1] = ?, [Ф_фин_2] = ?,
-                                [Ф_фин_3] = ?, [Ф_фин_4] = ?
-            WHERE [НТП] = ? AND [НИР] = ?
-        """, (quarter, quarter, quarter, fact_fin - 3 * quarter, ntp_code, nir_code))
-
-    # распределяем общую сумму каждого НТП по кварталам тем же способом
-    cur.execute("SELECT [Факт_фин], [код_НТП] FROM ntp_prog")
-    for fact_fin, ntp_code in cur.fetchall():
-        quarter = fact_fin // 4
-        cur.execute("""
-            UPDATE ntp_prog SET [Ф_фин_1] = ?, [Ф_фин_2] = ?,
-                                [Ф_фин_3] = ?, [Ф_фин_4] = ?
-            WHERE [код_НТП] = ?
-        """, (quarter, quarter, quarter, fact_fin - 3 * quarter, ntp_code))
+    # Фактические суммы и кварталы НИР не пересчитываем: они могут быть
+    # распределены вручную. В ntp_prog суммируем сохранённые значения НИР.
+    fact_fields = ("Факт_фин", "Ф_фин_1", "Ф_фин_2", "Ф_фин_3", "Ф_фин_4")
+    assignments = ", ".join(
+        f"[{field}] = COALESCE((SELECT SUM(p.[{field}]) "
+        f"FROM ntp_proj AS p WHERE p.[НТП] = ntp_prog.[код_НТП]), 0)"
+        for field in fact_fields
+    )
+    cur.execute(f"UPDATE ntp_prog SET {assignments}")
 
     con.commit()
     cur.close()
@@ -363,7 +344,6 @@ def add_record():
             GRNTI = GRNTI + "," + GRNTI_2
 
         plan_fin = addForm.edit_fin.text()
-        fact_fin = "0"
 
         name_NIR = addForm.edit_title.toPlainText()
 
@@ -397,9 +377,16 @@ def add_record():
         Type = TypeDict.get(addForm.combo_type_2.currentText())
 
         if len(errors) == 0:
-            new_str = (ntp, int(nir), int(codvuz), str(namevuz), str(ruk), str(doljn_ruk), GRNTI, Type, int(plan_fin), int(fact_fin), str(name_NIR), int(Sr_N),
-                          int(Sr_K))
-            Q8 = "INSERT INTO ntp_proj ([НТП], [НИР], [ВУЗ], [Исп_орг], [Руководитель], [Должн_руководитель], [ГРНТИ], [Хар], [План_фин], [Факт_фин], [Наименование_НИР], [Ср_Н], [Ср_К]) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            # При создании НИР фактическое финансирование ещё не выделено.
+            new_str = (ntp, int(nir), int(codvuz), str(namevuz), str(ruk),
+                       str(doljn_ruk), GRNTI, Type, int(plan_fin),
+                       0, 0, 0, 0, 0, str(name_NIR), int(Sr_N), int(Sr_K))
+            Q8 = """INSERT INTO ntp_proj
+                ([НТП], [НИР], [ВУЗ], [Исп_орг], [Руководитель],
+                 [Должн_руководитель], [ГРНТИ], [Хар], [План_фин],
+                 [Факт_фин], [Ф_фин_1], [Ф_фин_2], [Ф_фин_3], [Ф_фин_4],
+                 [Наименование_НИР], [Ср_Н], [Ср_К])
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
             cur.execute(Q8, new_str)
             con.commit()
             cur.close()
@@ -534,7 +521,6 @@ def edit_record():
             GRNTI = GRNTI + "," + GRNTI_2
 
         plan_fin = editForm.edit_fin.text()
-        fact_fin = "0"
 
         name_NIR = editForm.edit_title.toPlainText()
 
@@ -570,10 +556,11 @@ def edit_record():
         if len(errors) == 0:
             # Запрос ИЗМЕНЕНИЯ записи
             new_str = (int(ntp), int(nir), int(codvuz), str(namevuz), str(ruk), str(doljn_ruk), GRNTI, Type, int(plan_fin),
-                       int(fact_fin), str(name_NIR), int(Sr_N), int(Sr_K))
+                       str(name_NIR), int(Sr_N), int(Sr_K))
+            # Редактирование реквизитов НИР не должно обнулять уже выделенные средства.
             Q8 = """UPDATE ntp_proj SET [НТП] = ?, [НИР] = ?, [ВУЗ] = ?, [Исп_орг] = ?, [Руководитель] = ?, 
-                [Должн_руководитель] = ?, [ГРНТИ] = ?, [Хар] = ?, [План_фин] = ?, [Факт_фин] = ?, 
-                [Наименование_НИР] = ?, [Ср_Н] = ?, [Ср_К] = ? 
+                [Должн_руководитель] = ?, [ГРНТИ] = ?, [Хар] = ?, [План_фин] = ?,
+                [Наименование_НИР] = ?, [Ср_Н] = ?, [Ср_К] = ?
                     WHERE [НТП] = ? AND [НИР] = ?"""
             query_params = new_str + NTP_NIR
 
