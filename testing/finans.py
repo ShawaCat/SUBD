@@ -143,6 +143,7 @@ def raspred_fn():
     for i in range(len(list_vuz)):
         cur.execute(f"SELECT z1 FROM VUZ WHERE codvuz IS {list_vuz[i]}")
         table_data.append((cur.fetchone()[0], list_added_fin[i]))
+    table_data.append(("ИТОГО К РАСПРЕДЕЛЕНИЮ", sum(list_added_fin)))
 
     rows = len(table_data)
     model = QStandardItemModel(rows, 2, finWindow)
