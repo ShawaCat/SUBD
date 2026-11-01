@@ -1,4 +1,8 @@
 import sqlite3
+from datetime import datetime
+from pathlib import Path
+
+from pdf_report import report_filename, write_table_pdf
 from PyQt6 import uic
 from PyQt6.QtWidgets import *
 from PyQt6.QtSql import *
@@ -6,8 +10,11 @@ from PyQt6.QtCore import QSortFilterProxyModel, Qt, QRegularExpression, QItemSel
 from tkinter import messagebox
 from PyQt6.QtGui import QRegularExpressionValidator, QStandardItemModel, QStandardItem
 
+BASE_DIR = Path(__file__).resolve().parent
+
 app = QApplication([])
-finWindow = uic.loadUi("res/finans.ui")
+finWindow = uic.loadUi(str(BASE_DIR / "res/finans.ui"))
+report_quarter = None  # Квартал того распределения, которое показано в TableView.
 flags = finWindow.windowFlags()
 finWindow.setWindowFlags(
     flags &
@@ -78,6 +85,7 @@ def proc_raspred_changed():
         finWindow.summ_raspred.blockSignals(False)
 
 def raspred_fn():
+    global report_quarter
 
     if finWindow.summ_raspred.text() == "":
         messagebox.showerror("Ошибка", "Не задана сумма распределения")
@@ -92,7 +100,11 @@ def raspred_fn():
     procent = int(finWindow.proc_raspred.text())
     num_quart = int(finWindow.quartal_fin.text())
 
-    cur.execute("ATTACH DATABASE ':memory:' AS ram_db")
+    # Повторное распределение создаёт новый снимок; ram_db уже может быть подключена.
+    if any(row[1] == "ram_db" for row in con.execute("PRAGMA database_list")):
+        cur.execute("DROP TABLE IF EXISTS ram_db.ntp_proj")
+    else:
+        cur.execute("ATTACH DATABASE ':memory:' AS ram_db")
     cur.execute("CREATE TABLE ram_db.ntp_proj AS SELECT *, 0 AS [Доб_фин] FROM main.ntp_proj")
 
 
@@ -133,8 +145,7 @@ def raspred_fn():
         table_data.append((cur.fetchone()[0], list_added_fin[i]))
 
     rows = len(table_data)
-    cols = len(table_data[0]) if rows > 0 else 0
-    model = QStandardItemModel(rows, cols)
+    model = QStandardItemModel(rows, 2, finWindow)
     model.setHorizontalHeaderLabels(["ВУЗ", "К начислению"])
     for row_idx, current_tuple in enumerate(table_data):
         for col_idx, value in enumerate(current_tuple):
@@ -143,13 +154,49 @@ def raspred_fn():
 
             # Записываем элемент в ячейку (строка, колонка)
             model.setItem(row_idx, col_idx, item)
+    finWindow.report_model = model  # Держим модель до следующего распределения и экспорта.
     finWindow.tableView.setModel(model)
+    report_quarter = num_quart
     finWindow.tableView.horizontalHeader().setSectionResizeMode(
         finWindow.tableView.horizontalHeader().ResizeMode.ResizeToContents
     )
 
 
-con = sqlite3.connect('res/data.db')
+def save_report(path, exported_at):
+    """Записать PDF показанной таблицы, не обновляя основную базу данных."""
+    if report_quarter is None:
+        messagebox.showerror("Ошибка экспорта", "Сначала распределите денежные средства")
+        return
+    try:
+        write_table_pdf(finWindow.tableView, report_quarter, path, exported_at)
+    except Exception as error:
+        messagebox.showerror("Ошибка экспорта", f"Не удалось сохранить PDF:\n{error}")
+        return
+    messagebox.showinfo("PDF сохранён", f"Файл сохранён:\n{path}")
+
+
+def export_pdf():
+    if report_quarter is None:
+        messagebox.showerror("Ошибка экспорта", "Сначала распределите денежные средства")
+        return
+    exported_at = datetime.now()
+    path, _ = QFileDialog.getSaveFileName(
+        finWindow, "Сохранить распределение в PDF",
+        str(BASE_DIR / report_filename(exported_at)), "PDF-файлы (*.pdf)"
+    )
+    if not path:  # Пользователь отменил диалог.
+        return
+    if not path.lower().endswith(".pdf"):
+        path += ".pdf"
+    save_report(path, exported_at)
+
+
+def save_pdf_in_program_dir():
+    exported_at = datetime.now()
+    save_report(BASE_DIR / report_filename(exported_at), exported_at)
+
+
+con = sqlite3.connect(str(BASE_DIR / 'res/data.db'))
 cur = con.cursor()
 
 fill_data()
@@ -162,6 +209,8 @@ finWindow.cancel_2.clicked.connect(cancel_btn)
 finWindow.summ_raspred.textChanged.connect(summ_raspred_changed)
 finWindow.proc_raspred.textChanged.connect(proc_raspred_changed)
 finWindow.raspred.clicked.connect(raspred_fn)
+finWindow.export_2.clicked.connect(export_pdf)
+finWindow.write_to_db.clicked.connect(save_pdf_in_program_dir)
 
 finWindow.summ_raspred.setValidator(validator)
 finWindow.quartal_fin.setValidator(validator)

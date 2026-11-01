@@ -426,7 +426,7 @@
      </rect>
     </property>
     <property name="text">
-     <string>Запись в БД</string>
+     <string>Сохранить PDF в папку</string>
     </property>
    </widget>
    <widget class="QPushButton" name="cancel_2">
