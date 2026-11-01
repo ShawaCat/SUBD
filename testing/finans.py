@@ -224,7 +224,19 @@ def export_pdf():
     save_report(path, exported_at)
 
 
-def save_pdf_in_program_dir():
+def write_to_db():
+    cur.execute("""
+                UPDATE main.ntp_proj
+                SET [Факт_фин] = ram.[Факт_фин],
+                    [Ф_фин_1] = ram.[Ф_фин_1],
+                    [Ф_фин_2] = ram.[Ф_фин_2],
+                    [Ф_фин_3] = ram.[Ф_фин_3],
+                    [Ф_фин_4] = ram.[Ф_фин_4]
+                FROM ram_db.ntp_proj AS ram
+                WHERE main.ntp_proj.[НТП] = ram.[НТП]
+                    AND main.ntp_proj.[НИР] = ram.[НИР]
+                """)
+    con.commit()
     exported_at = datetime.now()
     save_report(BASE_DIR / report_filename(exported_at), exported_at)
 
@@ -243,7 +255,7 @@ finWindow.summ_raspred.textChanged.connect(summ_raspred_changed)
 finWindow.proc_raspred.textChanged.connect(proc_raspred_changed)
 finWindow.raspred.clicked.connect(raspred_fn)
 finWindow.export_2.clicked.connect(export_pdf)
-finWindow.write_to_db.clicked.connect(save_pdf_in_program_dir)
+finWindow.write_to_db.clicked.connect(write_to_db)
 
 finWindow.summ_raspred.setValidator(validator)
 finWindow.quartal_fin.setValidator(validator)
