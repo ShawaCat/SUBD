@@ -227,6 +227,7 @@ def save_report(path, exported_at):
         QMessageBox.critical(finWindow, "Ошибка экспорта", f"Не удалось сохранить PDF:\n{error}")
         return False
     QMessageBox.information(finWindow, "PDF сохранён", f"Файл сохранён:\n{path}")
+    
     return True
 
 
@@ -264,3 +265,4 @@ def write_to_db():
     fill_data()
     exported_at = datetime.now()
     save_report(BASE_DIR / report_filename(exported_at), exported_at)
+    cancel_btn()
