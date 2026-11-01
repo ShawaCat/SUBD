@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import *
 from PyQt6.QtSql import *
 from PyQt6.QtCore import QSortFilterProxyModel, Qt, QRegularExpression, QItemSelectionModel, QModelIndex, QItemSelection
 from tkinter import messagebox
-from PyQt6.QtGui import QRegularExpressionValidator, QStandardItemModel
+from PyQt6.QtGui import QRegularExpressionValidator, QStandardItemModel, QStandardItem
 
 app = QApplication([])
 finWindow = uic.loadUi("res/finans.ui")
@@ -93,24 +93,60 @@ def raspred_fn():
     num_quart = int(finWindow.quartal_fin.text())
 
     cur.execute("ATTACH DATABASE ':memory:' AS ram_db")
-    cur.execute("CREATE TABLE ram_db.ntp_proj AS SELECT * FROM main.ntp_proj")
+    cur.execute("CREATE TABLE ram_db.ntp_proj AS SELECT *, 0 AS [Доб_фин] FROM main.ntp_proj")
 
-    cur.execute("SELECT * FROM ram_db.ntp_proj")
-    spis = cur.fetchall()
-    for i in range(5):
-        print(spis[i])
 
+    query = f"""
+        UPDATE ram_db.ntp_proj 
+        SET [Доб_фин] = FLOOR([План_фин] * {procent} / 100.0)
+    """
+    cur.execute(query)
     query = f"""
         UPDATE ram_db.ntp_proj 
         SET [Ф_фин_{num_quart}] = [Ф_фин_{num_quart}] + FLOOR([План_фин] * {procent} / 100.0)
     """
     cur.execute(query)
+    query = f"""
+        UPDATE ram_db.ntp_proj 
+        SET [Факт_фин] = [Ф_фин_1] + [Ф_фин_2] + [Ф_фин_3] + [Ф_фин_4]
+    """
+    cur.execute(query)
 
-    spis = []
-    cur.execute("SELECT * FROM ram_db.ntp_proj")
-    spis = cur.fetchall()
-    for i in range(5):
-        print(spis[i])
+
+    list_vuz = []
+    list_added_fin = []
+    table_data = []
+    cur.execute("SELECT [ВУЗ], [Доб_фин] FROM ram_db.ntp_proj")
+    vuz_fin = cur.fetchall()
+    for i in vuz_fin:
+        list_vuz.append(i[0])
+    list_vuz = list(set(list_vuz))
+    list_vuz.sort()
+    for i in list_vuz:
+        summa = 0
+        for j in vuz_fin:
+            if j[0] == i:
+                summa += j[1]
+        list_added_fin.append(int(summa))
+    for i in range(len(list_vuz)):
+        cur.execute(f"SELECT z1 FROM VUZ WHERE codvuz IS {list_vuz[i]}")
+        table_data.append((cur.fetchone()[0], list_added_fin[i]))
+
+    rows = len(table_data)
+    cols = len(table_data[0]) if rows > 0 else 0
+    model = QStandardItemModel(rows, cols)
+    model.setHorizontalHeaderLabels(["ВУЗ", "К начислению"])
+    for row_idx, current_tuple in enumerate(table_data):
+        for col_idx, value in enumerate(current_tuple):
+            # QStandardItem принимает только строки, поэтому приводим value к str()
+            item = QStandardItem(str(value))
+
+            # Записываем элемент в ячейку (строка, колонка)
+            model.setItem(row_idx, col_idx, item)
+    finWindow.tableView.setModel(model)
+    finWindow.tableView.horizontalHeader().setSectionResizeMode(
+        finWindow.tableView.horizontalHeader().ResizeMode.ResizeToContents
+    )
 
 
 con = sqlite3.connect('res/data.db')
