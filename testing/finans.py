@@ -1,3 +1,4 @@
+import math
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -84,6 +85,24 @@ def proc_raspred_changed():
         finWindow.summ_raspred.setText("")
         finWindow.summ_raspred.blockSignals(False)
 
+def allocate_amounts(plans, amount, percentage):
+    """Распределить всю целую сумму по планам НИР без потери при округлении."""
+    plans = [plan or 0 for plan in plans]
+    total_plan = sum(plans)
+    if amount <= 0 or any(plan < 0 for plan in plans) or total_plan <= 0:
+        raise ValueError("Невозможно распределить сумму по плановому финансированию")
+    # Процент при ручном вводе суммы округляется до 5 знаков, сумма при вводе
+    # процента — до целого числа. Учитываем оба округления при проверке.
+    if abs(total_plan * percentage / 100 - amount) > 0.5 + total_plan * 0.00000005 + 1e-6:
+        raise ValueError("Сумма и процент распределения не совпадают")
+    shares = [divmod(plan * amount, total_plan) for plan in plans]
+    result = [whole for whole, _ in shares]
+    remainder = amount - sum(result)
+    for index in sorted(range(len(plans)), key=lambda i: (-shares[i][1], i))[:remainder]:
+        result[index] += 1
+    return result
+
+
 def raspred_fn():
     global report_quarter
 
@@ -93,36 +112,49 @@ def raspred_fn():
     if finWindow.quartal_fin.text() == "":
         messagebox.showerror("Ошибка", "Не задан квартал финансирования")
         return -1
-    if not (1 <= int(finWindow.quartal_fin.text()) <= 4):
+    try:
+        num_quart = int(finWindow.quartal_fin.text())
+    except ValueError:
+        messagebox.showerror("Ошибка", "Задан некорректный квартал финансирования")
+        return -1
+    if not 1 <= num_quart <= 4:
         messagebox.showerror("Ошибка", "Задан некорректный квартал финансирования")
         return -1
 
-    procent = int(finWindow.proc_raspred.text())
-    num_quart = int(finWindow.quartal_fin.text())
+    # Процент из LineEdit может быть дробным (например, 10.5).
+    try:
+        procent = float(finWindow.proc_raspred.text())
+    except ValueError:
+        messagebox.showerror("Ошибка", "Задан некорректный процент распределения")
+        return -1
+    if not math.isfinite(procent) or procent < 0:
+        messagebox.showerror("Ошибка", "Задан некорректный процент распределения")
+        return -1
+    try:
+        amount = int(finWindow.summ_raspred.text())
+        plans = [row[0] for row in cur.execute(
+            "SELECT [План_фин] FROM main.ntp_proj ORDER BY rowid"
+        ).fetchall()]
+        allocated = allocate_amounts(plans, amount, procent)
+    except ValueError as error:
+        messagebox.showerror("Ошибка", str(error))
+        return -1
 
     # Повторное распределение создаёт новый снимок; ram_db уже может быть подключена.
     if any(row[1] == "ram_db" for row in con.execute("PRAGMA database_list")):
         cur.execute("DROP TABLE IF EXISTS ram_db.ntp_proj")
     else:
         cur.execute("ATTACH DATABASE ':memory:' AS ram_db")
-    cur.execute("CREATE TABLE ram_db.ntp_proj AS SELECT *, 0 AS [Доб_фин] FROM main.ntp_proj")
-
-
-    query = f"""
-        UPDATE ram_db.ntp_proj 
-        SET [Доб_фин] = FLOOR([План_фин] * {procent} / 100.0)
-    """
-    cur.execute(query)
-    query = f"""
-        UPDATE ram_db.ntp_proj 
-        SET [Ф_фин_{num_quart}] = [Ф_фин_{num_quart}] + FLOOR([План_фин] * {procent} / 100.0)
-    """
-    cur.execute(query)
-    query = f"""
-        UPDATE ram_db.ntp_proj 
-        SET [Факт_фин] = [Ф_фин_1] + [Ф_фин_2] + [Ф_фин_3] + [Ф_фин_4]
-    """
-    cur.execute(query)
+    cur.execute("""CREATE TABLE ram_db.ntp_proj AS
+        SELECT *, 0 AS [Доб_фин] FROM main.ntp_proj ORDER BY rowid""")
+    # Виртуальные rowid здесь 1..N в том же порядке, что и планы выше.
+    cur.executemany(f"""
+        UPDATE ram_db.ntp_proj
+        SET [Доб_фин] = ?,
+            [Ф_фин_{num_quart}] = COALESCE([Ф_фин_{num_quart}], 0) + ?,
+            [Факт_фин] = COALESCE([Факт_фин], 0) + ?
+        WHERE rowid = ?
+    """, ((part, part, part, rowid) for rowid, part in enumerate(allocated, 1)))
 
 
     list_vuz = []
