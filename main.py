@@ -11,10 +11,12 @@ from PyQt6.QtWidgets import *
 from PyQt6.QtSql import *
 from PyQt6.QtCore import QSortFilterProxyModel, Qt, QRegularExpression, QItemSelectionModel, QModelIndex, QItemSelection
 from tkinter import messagebox
-from PyQt6.QtGui import QRegularExpressionValidator, QStandardItemModel
+from PyQt6.QtGui import QIcon, QRegularExpressionValidator, QStandardItemModel
 import pyqt6_multiselect_combobox
 
 from pdf_export import write_pdf
+from finans import open_financing_window
+from app_paths import res_path
 
 sys.modules["pyqt6_multiselect-combobox"] = pyqt6_multiselect_combobox
 
@@ -104,7 +106,7 @@ def open_tab_3():
     form.Filter.setEnabled(False)
 
 def view_help():
-    os.startfile("res\\help.txt")
+    os.startfile(str(res_path("help.txt")))
 
 def exit_btn():
     sys.exit(0)
@@ -125,7 +127,7 @@ def rebuild_db():
     QSqlDatabase.removeDatabase(connection_name)
 
 
-    con = sqlite3.connect('res/data.db')
+    con = sqlite3.connect(db_file)
     cur = con.cursor()
 
     # перенос аббреавиатуры ВУЗА из таблицы ВУЗ по коду ВУЗА
@@ -175,6 +177,16 @@ def rebuild_db():
         Q5 = "UPDATE ntp_prog SET [П_фин_1] = ?, [П_фин_2] = ?, [П_фин_3] = ?, [П_фин_4] = ? WHERE [код_НТП] = ?"
         cur.execute(Q5, pl_f_ntp_1234)
 
+    # Фактические суммы и кварталы НИР не пересчитываем: они могут быть
+    # распределены вручную. В ntp_prog суммируем сохранённые значения НИР.
+    fact_fields = ("Факт_фин", "Ф_фин_1", "Ф_фин_2", "Ф_фин_3", "Ф_фин_4")
+    assignments = ", ".join(
+        f"[{field}] = COALESCE((SELECT SUM(p.[{field}]) "
+        f"FROM ntp_proj AS p WHERE p.[НТП] = ntp_prog.[код_НТП]), 0)"
+        for field in fact_fields
+    )
+    cur.execute(f"UPDATE ntp_prog SET {assignments}")
+
     con.commit()
     cur.close()
     con.close()
@@ -223,7 +235,7 @@ def del_record():
         connection_name = QSqlDatabase.database().connectionName()
         QSqlDatabase.database().close()
         QSqlDatabase.removeDatabase(connection_name)
-        con = sqlite3.connect('res/data.db')
+        con = sqlite3.connect(db_file)
         cur = con.cursor()
         cur.execute("DELETE FROM ntp_proj WHERE [НТП] = ? AND [НИР] = ?", (key_selected_record[0], key_selected_record[1]))
         con.commit()
@@ -279,7 +291,7 @@ def add_record():
     connection_name = QSqlDatabase.database().connectionName()
     QSqlDatabase.database().close()
     QSqlDatabase.removeDatabase(connection_name)
-    con = sqlite3.connect('res/data.db')
+    con = sqlite3.connect(db_file)
     cur = con.cursor()
 
     current_index = 0
@@ -334,7 +346,6 @@ def add_record():
             GRNTI = GRNTI + "," + GRNTI_2
 
         plan_fin = addForm.edit_fin.text()
-        fact_fin = "0"
 
         name_NIR = addForm.edit_title.toPlainText()
 
@@ -368,9 +379,16 @@ def add_record():
         Type = TypeDict.get(addForm.combo_type_2.currentText())
 
         if len(errors) == 0:
-            new_str = (ntp, int(nir), int(codvuz), str(namevuz), str(ruk), str(doljn_ruk), GRNTI, Type, int(plan_fin), int(fact_fin), str(name_NIR), int(Sr_N),
-                          int(Sr_K))
-            Q8 = "INSERT INTO ntp_proj ([НТП], [НИР], [ВУЗ], [Исп_орг], [Руководитель], [Должн_руководитель], [ГРНТИ], [Хар], [План_фин], [Факт_фин], [Наименование_НИР], [Ср_Н], [Ср_К]) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            # При создании НИР фактическое финансирование ещё не выделено.
+            new_str = (ntp, int(nir), int(codvuz), str(namevuz), str(ruk),
+                       str(doljn_ruk), GRNTI, Type, int(plan_fin),
+                       0, 0, 0, 0, 0, str(name_NIR), int(Sr_N), int(Sr_K))
+            Q8 = """INSERT INTO ntp_proj
+                ([НТП], [НИР], [ВУЗ], [Исп_орг], [Руководитель],
+                 [Должн_руководитель], [ГРНТИ], [Хар], [План_фин],
+                 [Факт_фин], [Ф_фин_1], [Ф_фин_2], [Ф_фин_3], [Ф_фин_4],
+                 [Наименование_НИР], [Ср_Н], [Ср_К])
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
             cur.execute(Q8, new_str)
             con.commit()
             cur.close()
@@ -394,7 +412,7 @@ def add_record():
         open_tab_1()
         addWindow.close()
 
-    Add_Form, Add_Window = uic.loadUiType("res/add_new.ui")
+    Add_Form, Add_Window = uic.loadUiType(str(res_path("add_new.ui")))
     addWindow = Add_Window()
     flags = addWindow.windowFlags()
     addWindow.setWindowFlags(
@@ -505,7 +523,6 @@ def edit_record():
             GRNTI = GRNTI + "," + GRNTI_2
 
         plan_fin = editForm.edit_fin.text()
-        fact_fin = "0"
 
         name_NIR = editForm.edit_title.toPlainText()
 
@@ -541,10 +558,11 @@ def edit_record():
         if len(errors) == 0:
             # Запрос ИЗМЕНЕНИЯ записи
             new_str = (int(ntp), int(nir), int(codvuz), str(namevuz), str(ruk), str(doljn_ruk), GRNTI, Type, int(plan_fin),
-                       int(fact_fin), str(name_NIR), int(Sr_N), int(Sr_K))
+                       str(name_NIR), int(Sr_N), int(Sr_K))
+            # Редактирование реквизитов НИР не должно обнулять уже выделенные средства.
             Q8 = """UPDATE ntp_proj SET [НТП] = ?, [НИР] = ?, [ВУЗ] = ?, [Исп_орг] = ?, [Руководитель] = ?, 
-                [Должн_руководитель] = ?, [ГРНТИ] = ?, [Хар] = ?, [План_фин] = ?, [Факт_фин] = ?, 
-                [Наименование_НИР] = ?, [Ср_Н] = ?, [Ср_К] = ? 
+                [Должн_руководитель] = ?, [ГРНТИ] = ?, [Хар] = ?, [План_фин] = ?,
+                [Наименование_НИР] = ?, [Ср_Н] = ?, [Ср_К] = ?
                     WHERE [НТП] = ? AND [НИР] = ?"""
             query_params = new_str + NTP_NIR
 
@@ -568,7 +586,7 @@ def edit_record():
     connection_name = QSqlDatabase.database().connectionName()
     QSqlDatabase.database().close()
     QSqlDatabase.removeDatabase(connection_name)
-    con = sqlite3.connect('res/data.db')
+    con = sqlite3.connect(db_file)
     cur = con.cursor()
 
     current_index = 0
@@ -579,7 +597,7 @@ def edit_record():
     temp_vuz = []
 
 
-    Edit_Form, Edit_Window = uic.loadUiType("res/edit.ui")
+    Edit_Form, Edit_Window = uic.loadUiType(str(res_path("edit.ui")))
     editWindow = Edit_Window()
     flags = editWindow.windowFlags()
     editWindow.setWindowFlags(
@@ -687,7 +705,7 @@ def open_filter_window():
 
     selected_items = []
 
-    filterWindow = uic.loadUi("res/filter.ui")
+    filterWindow = uic.loadUi(str(res_path("filter.ui")))
     flags = filterWindow.windowFlags()
     filterWindow.setWindowFlags(
         flags &
@@ -696,7 +714,7 @@ def open_filter_window():
         ~Qt.WindowType.WindowMaximizeButtonHint
     )
 
-    con = sqlite3.connect("res/data.db")
+    con = sqlite3.connect(db_file)
     cur = con.cursor()
 
     # Настройка разделителя
@@ -1063,6 +1081,45 @@ def analysis_nir_by_ntp_btn():
 def analysis_nir_by_type_btn():
     analysis(3)
 
+def open_financing():
+    """Передать владение базой окну финансирования до его закрытия."""
+    global finansWindow, model, proxy_model
+    if finansWindow is not None:
+        finansWindow.raise_()
+        finansWindow.activateWindow()
+        return
+
+    # Модель и запросы больше не должны удерживать закрываемое Qt-подключение.
+    form.tableView.setModel(None)
+    model = None
+    proxy_model = None
+    connection = QSqlDatabase.database()
+    connection_name = connection.connectionName()
+    connection.close()
+    del connection
+    QSqlDatabase.removeDatabase(connection_name)
+    window.setEnabled(False)
+    try:
+        finansWindow = open_financing_window(db_file, on_close_callback=close_financing)
+        finansWindow.show()
+    except Exception as error:
+        close_financing()
+        QMessageBox.critical(window, "Ошибка", f"Не удалось открыть финансирование:\n{error}")
+
+
+def close_financing():
+    """После sqlite3 восстановить QSql, таблицу и агрегаты НТП."""
+    global finansWindow
+    finansWindow = None
+    try:
+        connect_db(db_file)
+        rebuild_db()  # Пересчитывает НТП и заново открывает активную таблицу.
+        if table_num == 1:
+            sort_table()
+    finally:
+        window.setEnabled(True)
+
+
 def analysis(mode):
     global analysisWindow, filter_query
 
@@ -1070,7 +1127,7 @@ def analysis(mode):
     QSqlDatabase.database().close()
     QSqlDatabase.removeDatabase(connection_name)
 
-    analysisWindow = uic.loadUi("res/table.ui")
+    analysisWindow = uic.loadUi(str(res_path("table.ui")))
     flags = analysisWindow.windowFlags()
     analysisWindow.setWindowFlags(
         flags &
@@ -1079,7 +1136,7 @@ def analysis(mode):
         ~Qt.WindowType.WindowMaximizeButtonHint
     )
 
-    con = sqlite3.connect('res/data.db')
+    con = sqlite3.connect(db_file)
     cur = con.cursor()
     table_model = None
 
@@ -1274,6 +1331,7 @@ filterWindow = None
 editForm = None
 editWindow = None
 analysisWindow = None
+finansWindow = None
 model = None
 proxy_model = None
 table_num = 1
@@ -1294,14 +1352,15 @@ filter_first_changed_combo = None
 # Инит
 ################################
 
-Form, Window = uic.loadUiType("res/main_py.ui")
+Form, Window = uic.loadUiType(str(res_path("main_py.ui")))
 
-db_file = "res/data.db"
+db_file = str(res_path("data.db"))
 
 app = QApplication([])
 window = Window()
 form = Form()
 form.setupUi(window)
+window.setWindowIcon(QIcon(str(res_path("ico.png"))))
 
 if not connect_db(db_file):
     sys.exit(-1)
@@ -1336,6 +1395,7 @@ form.help_btn.triggered.connect(view_help)
 form.NIR_by_VUZ.triggered.connect(analysis_nir_by_vuz_btn)
 form.NIR_by_NTP.triggered.connect(analysis_nir_by_ntp_btn)
 form.NIR_by_type.triggered.connect(analysis_nir_by_type_btn)
+form.finans_btn.triggered.connect(open_financing)
 form.Sort_btn.clicked.connect(sort_table)
 form.tableView.clicked.connect(off_btns)
 form.tableView.verticalHeader().sectionClicked.connect(take_record_num)

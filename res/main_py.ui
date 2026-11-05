@@ -115,7 +115,7 @@
    </widget>
    <widget class="QMenu" name="menu_5">
     <property name="title">
-     <string>Операции</string>
+     <string>Пересчёт</string>
     </property>
     <addaction name="rebuild_btn"/>
    </widget>
@@ -127,9 +127,16 @@
     <addaction name="NIR_by_NTP"/>
     <addaction name="NIR_by_type"/>
    </widget>
+   <widget class="QMenu" name="menu_6">
+    <property name="title">
+     <string>Финансирование</string>
+    </property>
+    <addaction name="finans_btn"/>
+   </widget>
    <addaction name="menu"/>
-   <addaction name="menu_5"/>
    <addaction name="menu_4"/>
+   <addaction name="menu_6"/>
+   <addaction name="menu_5"/>
    <addaction name="menu_3"/>
    <addaction name="menu_2"/>
   </widget>
@@ -186,6 +193,11 @@
   <action name="NIR_by_type">
    <property name="text">
     <string>Распределение НИР по характеру</string>
+   </property>
+  </action>
+  <action name="finans_btn">
+   <property name="text">
+    <string>Распределение финансирования</string>
    </property>
   </action>
  </widget>
