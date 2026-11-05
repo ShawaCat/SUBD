@@ -82,6 +82,7 @@ class FractionalPercentageTest(unittest.TestCase):
         """)
         self.errors = []
         self.saved = []
+        self.closed = []
         self.window = SimpleNamespace(
             summ_raspred=FakeLineEdit("32"),
             quartal_fin=FakeLineEdit("2"),
@@ -98,6 +99,7 @@ class FractionalPercentageTest(unittest.TestCase):
             "datetime": SimpleNamespace(now=lambda: datetime(2026, 11, 1)),
             "report_filename": lambda date: "report.pdf",
             "save_report": lambda path, date: self.saved.append(path),
+            "cancel_btn": lambda: self.closed.append(True),
             "QMessageBox": SimpleNamespace(critical=lambda *args: self.errors.append(args)),
             "QStandardItemModel": FakeModel, "QStandardItem": FakeItem,
         }
@@ -133,6 +135,7 @@ class FractionalPercentageTest(unittest.TestCase):
             "SELECT [Факт_фин], [Ф_фин_2] FROM ntp_proj ORDER BY rowid"
         ).fetchall(), [(21, 21), (11, 11)])
         self.assertEqual(self.saved, [ROOT / "report.pdf"])
+        self.assertEqual(self.closed, [True])
 
     def test_actual_percentage_rounded_to_three_digits(self):
         self.con.execute("UPDATE ntp_proj SET [Факт_фин] = 1 WHERE rowid = 1")

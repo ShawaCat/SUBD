@@ -11,11 +11,12 @@ from PyQt6.QtWidgets import *
 from PyQt6.QtSql import *
 from PyQt6.QtCore import QSortFilterProxyModel, Qt, QRegularExpression, QItemSelectionModel, QModelIndex, QItemSelection
 from tkinter import messagebox
-from PyQt6.QtGui import QRegularExpressionValidator, QStandardItemModel
+from PyQt6.QtGui import QIcon, QRegularExpressionValidator, QStandardItemModel
 import pyqt6_multiselect_combobox
 
 from pdf_export import write_pdf
 from finans import open_financing_window
+from app_paths import res_path
 
 sys.modules["pyqt6_multiselect-combobox"] = pyqt6_multiselect_combobox
 
@@ -105,7 +106,7 @@ def open_tab_3():
     form.Filter.setEnabled(False)
 
 def view_help():
-    os.startfile("res\\help.txt")
+    os.startfile(str(res_path("help.txt")))
 
 def exit_btn():
     sys.exit(0)
@@ -126,7 +127,7 @@ def rebuild_db():
     QSqlDatabase.removeDatabase(connection_name)
 
 
-    con = sqlite3.connect('res/data.db')
+    con = sqlite3.connect(db_file)
     cur = con.cursor()
 
     # перенос аббреавиатуры ВУЗА из таблицы ВУЗ по коду ВУЗА
@@ -234,7 +235,7 @@ def del_record():
         connection_name = QSqlDatabase.database().connectionName()
         QSqlDatabase.database().close()
         QSqlDatabase.removeDatabase(connection_name)
-        con = sqlite3.connect('res/data.db')
+        con = sqlite3.connect(db_file)
         cur = con.cursor()
         cur.execute("DELETE FROM ntp_proj WHERE [НТП] = ? AND [НИР] = ?", (key_selected_record[0], key_selected_record[1]))
         con.commit()
@@ -290,7 +291,7 @@ def add_record():
     connection_name = QSqlDatabase.database().connectionName()
     QSqlDatabase.database().close()
     QSqlDatabase.removeDatabase(connection_name)
-    con = sqlite3.connect('res/data.db')
+    con = sqlite3.connect(db_file)
     cur = con.cursor()
 
     current_index = 0
@@ -411,7 +412,7 @@ def add_record():
         open_tab_1()
         addWindow.close()
 
-    Add_Form, Add_Window = uic.loadUiType("res/add_new.ui")
+    Add_Form, Add_Window = uic.loadUiType(str(res_path("add_new.ui")))
     addWindow = Add_Window()
     flags = addWindow.windowFlags()
     addWindow.setWindowFlags(
@@ -585,7 +586,7 @@ def edit_record():
     connection_name = QSqlDatabase.database().connectionName()
     QSqlDatabase.database().close()
     QSqlDatabase.removeDatabase(connection_name)
-    con = sqlite3.connect('res/data.db')
+    con = sqlite3.connect(db_file)
     cur = con.cursor()
 
     current_index = 0
@@ -596,7 +597,7 @@ def edit_record():
     temp_vuz = []
 
 
-    Edit_Form, Edit_Window = uic.loadUiType("res/edit.ui")
+    Edit_Form, Edit_Window = uic.loadUiType(str(res_path("edit.ui")))
     editWindow = Edit_Window()
     flags = editWindow.windowFlags()
     editWindow.setWindowFlags(
@@ -704,7 +705,7 @@ def open_filter_window():
 
     selected_items = []
 
-    filterWindow = uic.loadUi("res/filter.ui")
+    filterWindow = uic.loadUi(str(res_path("filter.ui")))
     flags = filterWindow.windowFlags()
     filterWindow.setWindowFlags(
         flags &
@@ -713,7 +714,7 @@ def open_filter_window():
         ~Qt.WindowType.WindowMaximizeButtonHint
     )
 
-    con = sqlite3.connect("res/data.db")
+    con = sqlite3.connect(db_file)
     cur = con.cursor()
 
     # Настройка разделителя
@@ -1126,7 +1127,7 @@ def analysis(mode):
     QSqlDatabase.database().close()
     QSqlDatabase.removeDatabase(connection_name)
 
-    analysisWindow = uic.loadUi("res/table.ui")
+    analysisWindow = uic.loadUi(str(res_path("table.ui")))
     flags = analysisWindow.windowFlags()
     analysisWindow.setWindowFlags(
         flags &
@@ -1135,7 +1136,7 @@ def analysis(mode):
         ~Qt.WindowType.WindowMaximizeButtonHint
     )
 
-    con = sqlite3.connect('res/data.db')
+    con = sqlite3.connect(db_file)
     cur = con.cursor()
     table_model = None
 
@@ -1351,14 +1352,15 @@ filter_first_changed_combo = None
 # Инит
 ################################
 
-Form, Window = uic.loadUiType("res/main_py.ui")
+Form, Window = uic.loadUiType(str(res_path("main_py.ui")))
 
-db_file = "res/data.db"
+db_file = str(res_path("data.db"))
 
 app = QApplication([])
 window = Window()
 form = Form()
 form.setupUi(window)
+window.setWindowIcon(QIcon(str(res_path("ico.png"))))
 
 if not connect_db(db_file):
     sys.exit(-1)

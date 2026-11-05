@@ -9,7 +9,7 @@ import math
 import re
 import sqlite3
 from datetime import datetime
-from pathlib import Path
+from app_paths import app_dir, res_path
 
 from PyQt6 import uic
 from PyQt6.QtCore import QRegularExpression, Qt
@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from finans_pdf import report_filename, write_table_pdf
 
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = app_dir()
 finWindow = None
 con = None
 cur = None
@@ -28,10 +28,12 @@ on_close = None
 PERCENT_PATTERN = r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)"
 
 
-def open_financing_window(db_file=BASE_DIR / "res/data.db", on_close_callback=None):
+def open_financing_window(db_file=None, on_close_callback=None):
     """Создать форму и соединение sqlite3 в существующем QApplication."""
     global finWindow, con, cur, report_quarter, on_close
-    finWindow = uic.loadUi(str(BASE_DIR / "res/finans.ui"))
+    if db_file is None:
+        db_file = res_path("data.db")
+    finWindow = uic.loadUi(str(res_path("finans.ui")))
     flags = finWindow.windowFlags()
     # Как и в остальных окнах программы, закрытие производится кнопкой формы.
     finWindow.setWindowFlags(
